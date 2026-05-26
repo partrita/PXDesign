@@ -168,4 +168,6 @@ cython_debug/
 wandb/
 output*/
 release_data/
-tool_weights/
+tool_weights/# pixi environments
+.pixi/*
+!.pixi/config.toml

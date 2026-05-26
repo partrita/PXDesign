@@ -5,7 +5,7 @@ set -euo pipefail
 # PXDesign One-Click Installation Script
 #
 # This script will:
-#   1. Create a dedicated conda/mamba/micromamba environment
+#   1. Create a dedicated conda/mamba/micromamba/pixi environment
 #   2. Install GPU PyTorch matching a specified CUDA version
 #   3. Install Protenix
 #   4. Install PXDesignBench dependencies
@@ -13,15 +13,15 @@ set -euo pipefail
 #   6. Run basic import sanity checks
 #
 # Supported options:
-#   --env <name>           Conda/mamba environment name (default: pxdesign)
-#   --pkg_manager <tool>   conda | mamba | micromamba (default: conda)
+#   --env <name>           Conda/mamba/pixi environment name (default: pxdesign)
+#   --pkg_manager <tool>   conda | mamba | micromamba | pixi (default: conda)
 #   --cuda-version <ver>   CUDA version string, e.g. 12.1, 12.2, 12.4
 #                          Required. Must be >= 12.1.
 ############################################################
 
 # Default configuration
 env_name="pxdesign"
-pkg_manager="conda"      # conda | mamba | micromamba
+pkg_manager="conda"      # conda | mamba | micromamba | pixi
 cuda_version=""          # e.g. 12.1, 12.2, 12.4
 
 # ----------------------------------------------------------
@@ -145,8 +145,15 @@ case "${pkg_manager}" in
     fi
     env_tool="micromamba"
     ;;
+  pixi)
+    if ! command -v pixi >/dev/null 2>&1; then
+      echo "Error: pixi is not installed or not in PATH."
+      exit 1
+    fi
+    env_tool="pixi"
+    ;;
   *)
-    echo "Error: unsupported pkg_manager '${pkg_manager}'. Use 'conda', 'mamba', or 'micromamba'."
+    echo "Error: unsupported pkg_manager '${pkg_manager}'. Use 'conda', 'mamba', 'micromamba', or 'pixi'."
     exit 1
     ;;
 esac
@@ -178,6 +185,26 @@ if [ "${env_tool}" = "micromamba" ]; then
     echo "Error: failed to activate environment ${env_name} with micromamba"
     exit 1
   }
+
+elif [ "${env_tool}" = "pixi" ]; then
+  echo ">>> Using pixi to manage environments"
+
+  if [ ! -f "pixi.toml" ] && [ ! -f "pyproject.toml" ]; then
+    echo ">>> Initializing pixi project in '${install_dir}'"
+    pixi init . || {
+      echo "Error: failed to initialize pixi project in ${install_dir}"
+      exit 1
+    }
+  fi
+
+  echo ">>> Adding Python 3.11 to pixi"
+  pixi add python=3.11 pip || {
+    echo "Error: failed to add Python 3.11 to pixi"
+    exit 1
+  }
+
+  echo ">>> Activating environment (pixi shell-hook)"
+  eval "$(pixi shell-hook -s bash)"
 
 else
   echo ">>> Using ${env_tool} to manage environments"
@@ -215,19 +242,60 @@ echo "Environment '${env_name}' successfully activated."
 # Python package installation
 ############################################################
 
-echo ">>> Upgrading pip"
-python -m pip install --upgrade pip
+if [ "${env_tool}" = "pixi" ]; then
+  echo ">>> Installing dependencies with pixi"
 
-# ----------------------------------------------------------
-# 1) Install GPU PyTorch first (matching CUDA version)
-# ----------------------------------------------------------
-echo ">>> Installing PyTorch (GPU, CUDA ${cuda_version}, tag ${torch_tag})"
-pip install --no-cache-dir \
-  "torch==${torch_version}" \
-  --index-url "https://download.pytorch.org/whl/${torch_tag}" \
-  || { echo "Error: failed to install PyTorch ${torch_version} with ${torch_tag} wheels."; exit 1; }
+  # 1) Install conda dependencies (including cudnn)
+  pixi add "numpy=1.26.3" einops natsort dm-tree posix_ipc cudnn \
+           "transformers=4.51.3" || {
+    echo "Error: failed to install conda dependencies with pixi."
+    exit 1
+  }
 
-python - << 'PYTORCH_CHECK'
+  echo ">>> Installing dm-haiku and optax via pypi"
+  pixi add --pypi "dm-haiku==0.0.13" "optax==0.2.5" "chex==0.1.87" || {
+    echo "Error: failed to install pypi dependencies with pixi."
+    exit 1
+  }
+
+  # 2) Install PyTorch & JAX with pip (using specific index/find-links)
+  echo ">>> Installing PyTorch (GPU, CUDA ${cuda_version}, tag ${torch_tag})"
+  pip install --no-cache-dir \
+    "torch==${torch_version}" \
+    --index-url "https://download.pytorch.org/whl/${torch_tag}" || {
+    echo "Error: failed to install PyTorch."
+    exit 1
+  }
+
+  echo ">>> Installing JAX with CUDA support"
+  pip install --no-cache-dir \
+    "jax[cuda]==0.4.29" \
+    -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html || {
+    echo "Error: failed to install JAX."
+    exit 1
+  }
+
+  # 3) Install PyPI Git dependencies and local editable
+  echo ">>> Installing Git dependencies and local package with pixi"
+  pixi add --pypi "protenix @ git+https://github.com/bytedance/Protenix.git@v0.5.0+pxd"
+  pixi add --pypi "colabdesign @ git+https://github.com/sokrypton/ColabDesign.git"
+  pixi add --pypi "pxdbench @ git+https://github.com/bytedance/PXDesignBench.git@v0.1.2"
+  pixi add --pypi "pxdesign @ ." --editable
+
+else
+  echo ">>> Upgrading pip"
+  python -m pip install --upgrade pip
+
+  # ----------------------------------------------------------
+  # 1) Install GPU PyTorch first (matching CUDA version)
+  # ----------------------------------------------------------
+  echo ">>> Installing PyTorch (GPU, CUDA ${cuda_version}, tag ${torch_tag})"
+  pip install --no-cache-dir \
+    "torch==${torch_version}" \
+    --index-url "https://download.pytorch.org/whl/${torch_tag}" \
+    || { echo "Error: failed to install PyTorch ${torch_version} with ${torch_tag} wheels."; exit 1; }
+
+  python - << 'PYTORCH_CHECK'
 import torch
 print("PyTorch version:", torch.__version__)
 print("CUDA available :", torch.cuda.is_available())
@@ -236,51 +304,52 @@ if torch.cuda.is_available():
     print("CUDA devices   :", torch.cuda.device_count())
 PYTORCH_CHECK
 
-# ----------------------------------------------------------
-# 2) Install Protenix & PXDesignBench
-# ----------------------------------------------------------
+  # ----------------------------------------------------------
+  # 2) Install Protenix & PXDesignBench
+  # ----------------------------------------------------------
 
-echo ">>> Installing Protenix"
-pip install --no-cache-dir "git+https://github.com/bytedance/Protenix.git@v0.5.0+pxd" \
-  || { echo "Error: failed to install Protenix."; exit 1; }
+  echo ">>> Installing Protenix"
+  pip install --no-cache-dir "git+https://github.com/bytedance/Protenix.git@v0.5.0+pxd" \
+    || { echo "Error: failed to install Protenix."; exit 1; }
 
-echo ">>> Installing PXDesignBench base dependencies"
-pip install --no-cache-dir \
-  einops \
-  natsort \
-  dm-tree \
-  posix_ipc \
-  "transformers==4.51.3" \
-  "dm-haiku==0.0.13" \
-  "optax==0.2.5" \
-  || { echo "Error: failed to install base Python dependencies."; exit 1; }
+  echo ">>> Installing PXDesignBench base dependencies"
+  pip install --no-cache-dir \
+    einops \
+    natsort \
+    dm-tree \
+    posix_ipc \
+    "transformers==4.51.3" \
+    "dm-haiku==0.0.13" \
+    "optax==0.2.5" \
+    || { echo "Error: failed to install base Python dependencies."; exit 1; }
 
-echo ">>> Installing ColabDesign (without dependencies)"
-pip install --no-cache-dir git+https://github.com/sokrypton/ColabDesign.git --no-deps \
-  || { echo "Error: failed to install ColabDesign."; exit 1; }
+  echo ">>> Installing ColabDesign (without dependencies)"
+  pip install --no-cache-dir git+https://github.com/sokrypton/ColabDesign.git --no-deps \
+    || { echo "Error: failed to install ColabDesign."; exit 1; }
 
-echo ">>> Installing JAX with CUDA support"
-pip install --no-cache-dir \
-  "jax[cuda]==0.4.29" \
-  -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html \
-  || { echo "Error: failed to install JAX (CUDA build)."; exit 1; }
+  echo ">>> Installing JAX with CUDA support"
+  pip install --no-cache-dir \
+    "jax[cuda]==0.4.29" \
+    -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html \
+    || { echo "Error: failed to install JAX (CUDA build)."; exit 1; }
 
-# downgrade numpy
-pip install --no-cache-dir \
-  "numpy==1.26.3" \
-  || { echo "Error: failed to install numpy 1.26.3."; exit 1; }
+  # downgrade numpy
+  pip install --no-cache-dir \
+    "numpy==1.26.3" \
+    || { echo "Error: failed to install numpy 1.26.3."; exit 1; }
 
-echo ">>> Installing PXDesignBench"
-pip install --no-cache-dir git+https://github.com/bytedance/PXDesignBench.git@v0.1.2 --no-deps \
-  || { echo "Error: failed to install PXDesignBench."; exit 1; }
+  echo ">>> Installing PXDesignBench"
+  pip install --no-cache-dir git+https://github.com/bytedance/PXDesignBench.git@v0.1.2 --no-deps \
+    || { echo "Error: failed to install PXDesignBench."; exit 1; }
 
-echo ">>> Installing PXDesign"
-pip install -e .
+  echo ">>> Installing PXDesign"
+  pip install -e .
 
-if [ "${env_tool}" = "micromamba" ]; then
-  micromamba install -c conda-forge cudnn -y || { echo "Error: failed to install cudnn with micromamba."; exit 1; }
-else
-  conda install -c conda-forge cudnn -y || { echo "Error: failed to install cudnn with conda."; exit 1; }
+  if [ "${env_tool}" = "micromamba" ]; then
+    micromamba install -c conda-forge cudnn -y || { echo "Error: failed to install cudnn with micromamba."; exit 1; }
+  else
+    conda install -c conda-forge cudnn -y || { echo "Error: failed to install cudnn with conda."; exit 1; }
+  fi
 fi
 
 
@@ -343,7 +412,9 @@ echo "Sanity checks completed."
 
 echo ">>> Cleaning up package manager caches"
 
-if [ "${env_tool}" = "micromamba" ]; then
+if [ "${env_tool}" = "pixi" ]; then
+  pixi clean -y || echo "Warning: failed to clean pixi caches."
+elif [ "${env_tool}" = "micromamba" ]; then
   micromamba clean -a -y || echo "Warning: failed to clean micromamba caches."
   micromamba deactivate || true
 else
@@ -359,7 +430,10 @@ echo "   Package manager  : ${pkg_manager}"
 echo "   CUDA version     : ${cuda_version} (torch tag: ${torch_tag})"
 echo
 echo " Activate with:"
-if [ "${env_tool}" = "micromamba" ]; then
+if [ "${env_tool}" = "pixi" ]; then
+  echo "   pixi shell"
+  echo "   (or run commands with 'pixi run <cmd>')"
+elif [ "${env_tool}" = "micromamba" ]; then
   echo "   micromamba activate ${env_name}"
 else
   echo "   conda activate ${env_name}"
@@ -367,3 +441,4 @@ fi
 echo
 echo " Installation time: $((t / 3600))h $(((t / 60) % 60))m $((t % 60))s"
 echo "=================================================="
+===="
