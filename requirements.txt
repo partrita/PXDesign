@@ -24,7 +24,7 @@ torch==2.13.0
 fair-esm
 posix_ipc
 einops
-transformers==5.10.1
+transformers==5.5.0
 optax==0.2.5
 dm-haiku==0.0.13
 natsort
