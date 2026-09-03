@@ -5,7 +5,7 @@ tqdm
 pandas
 optree
 rdkit
-biopython==1.83
+biopython==1.87
 modelcif==0.7
 biotite==1.0.1
 scikit-learn
@@ -24,7 +24,7 @@ torch==2.13.0
 fair-esm
 posix_ipc
 einops
-transformers==5.10.1
+transformers==5.16.1
 optax==0.2.5
 dm-haiku==0.0.13
 natsort
