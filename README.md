@@ -102,41 +102,53 @@ pip install -e .
 
 <details>
 <summary><b>
-Option 2: Conda 
+Option 2: Pixi (Recommended)
 </b></summary>
 
 <br>
 
-Run the script ``install.sh`` to set up an environment and install all dependencies.
+PXDesign is managed using [Pixi](https://pixi.sh) for fast, reproducible dependency resolution across CUDA, PyTorch, JAX, and Python packages.
+
+#### Installation
+
+Run the script `install.sh` to install dependencies and sync the environment:
+
+```bash
+bash install.sh
+```
 
 #### What the installer will do
 
-1. Create a dedicated conda / mamba / micromamba environment  
-2. Install **PyTorch** matching your specified CUDA version  
-3. Install **Protenix**
-4. Install **PXDesignBench**
-5. Install **PXDesign**
-6. Run **basic import sanity checks**  
+1. Verify or locate `pixi` in your system (or install via `curl -fsSL https://pixi.sh/install.sh | bash`)
+2. Clone **CUTLASS v3.5.1** (required for DeepSpeed Evo Attention) into `$CUTLASS_PATH` (defaults to `$HOME/cutlass`)
+3. Install dependencies and lock versions using Pixi (`pixi install`)
+4. Run sanity checks (`torch`, `jax`, `colabdesign`, `protenix`, `pxdbench`, `pxdesign`) and test CLI availability
 
-#### Supported options
+#### Running Commands
+
+- Run any command inside the Pixi environment:
+  ```bash
+  pixi run pxdesign pipeline --help
+  ```
+- Or enter an interactive shell:
+  ```bash
+  pixi shell
+  pxdesign pipeline --help
+  ```
+
+#### Uninstallation / Environment Cleanup
+
+To clean up or remove the environment:
 
 ```bash
---env <name>           Environment name (default: pxdesign)
---pkg_manager <tool>   conda | mamba | micromamba (default: conda)
---cuda-version <ver>   CUDA version string, e.g. 12.1, 12.2, 12.4
-                        Required. Must be >= 12.1.
+bash uninstall.sh
 ```
-
-Example:
-
-```bash
-bash -x install.sh --env pxdesign --pkg_manager conda --cuda-version 12.1
-```
+This script cleans `.pixi/`, optionally removes `pixi.lock`, removes Python build/cache artifacts, and prompts whether to remove the cloned CUTLASS repository.
 
 </details>
 
 
-Run `pxdesign pipeline --help` to ensure the installation is successful.
+Run `pixi run pxdesign pipeline --help` (or `pxdesign pipeline --help` inside `pixi shell`) to ensure the installation is successful.
 
 
 ## 2. First-Time Downloads

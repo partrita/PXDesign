@@ -1,0 +1,1 @@
+[{"name": "PDL1_quick_start", "condition": {"structure_file": "./examples/5o45.cif", "filter": {"chain_id": ["A"], "crop": {"A": "1-116"}}, "msa": {"A": {"precomputed_msa_dir": "./examples/msa/PDL1/0", "pairing_db": "uniref100"}}}, "hotspot": {"A": [40, 99, 107]}, "generation": [{"type": "protein", "length": 80, "count": 1}]}]
